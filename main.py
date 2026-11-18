@@ -94,8 +94,18 @@ def on_batch(state, batch):
     held = state.positions.get(SYMBOL)
     if held is not None:
         if entry_price is None:
-            # Held without a recorded fill price (should not happen): hold.
-            return []
+            # Held without a recorded fill price: the process restarted
+            # mid-race and lost its memory while the position survived.
+            # Rebuild the entry from the position's cost basis so the
+            # stop-loss / take-profit / trailing-stop exits below still run
+            # instead of holding forever. cost is in quote units (scale 6,
+            # fees included), qty at scale 8, prices at scale 5, so
+            # price = cost * 10**7 // qty.
+            if held.qty > 0:
+                entry_price = held.cost * 10**7 // held.qty
+                peak_since_entry = max(entry_price, close)
+            else:
+                return []
         if close <= entry_price * (1 - STOP):
             return [{"side": "sell", "symbol": SYMBOL, "qty": held.qty,
                      "max_slippage_bps": MAX_SLIPPAGE_BPS}]
